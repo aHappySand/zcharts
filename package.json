@@ -2,7 +2,7 @@
   "name": "zcharts",
   "version": "1.0.0",
   "description": "refactoring echarts using three.js",
-  "main": "main.js",
+  "main": "index.js",
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
