@@ -35,7 +35,7 @@ Container.prototype = {
       dieColor: '#ffffff00',
       crossDieColor: '#7FDDFF82', // '#7FDDFF82'
       circleColor: '#eaeaea', // '#eaeaea'  圆的颜色
-      dieBorderColor: '#252323', // '#f0f0f0' die边框的颜色
+      dieBorderColor: '#eeeeee', // '#f0f0f0' die边框的颜色
       selectedColor: '#ffff00', // 选中时的颜色
       zoneBorderColor: '#000000', //
       circleStroke: 1,
@@ -256,10 +256,9 @@ GridManager.prototype = {
 
   },
   directDraw() {
-    this.scene.drawTest();
-    // this.directDrawBase(true);
-    // this.directDrawDie();
-    // this.directDrawDefect();
+    this.directDrawBase(true);
+    this.directDrawDie();
+    this.directDrawDefect();
     // this.directDrawSelectedDie();
     // this.directDrawArea();
     // this.directDrawZone();
@@ -304,19 +303,19 @@ GridManager.prototype = {
     const { productId } = this.data;
     const { baseDie } = this.container;
     const borderData = baseDie[productId].dieBorderData;
-    const { props: { dieBorderColor, showDieGrid } } = this.container;
+    const { props: { dieBorderColor } } = this.container;
 
     this.scene.drawDieBorder({ borderData, dieBorderColor });
   },
 
   directDrawSelectedDie() {
     const hasSelected = this.hasSelectedDie();
-    const {
- diameter, dieHeight, dieWidth, selectedDie, ratio, showSelectedDie
-} = this;
+//     const {
+//  diameter, dieHeight, dieWidth, selectedDie, ratio, showSelectedDie
+// } = this;
 
     if (hasSelected) {
-      const { props: { selectedColor } } = this.container;
+      // const { props: { selectedColor } } = this.container;
       // const area = toImageBitMap(draw({
       //   type: 'selectedDie',
       //   options: {

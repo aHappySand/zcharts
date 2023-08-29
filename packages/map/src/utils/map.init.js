@@ -130,8 +130,10 @@ export function formatPattern(pattern, v) {
         // value 为数值且 有 格式化字符串
         switch (pattern) {
             case '#.00':
+                // eslint-disable-next-line radix
                 return (parseInt(value * 100) / 100).toFixed(2);
             case '0.00':
+                // eslint-disable-next-line radix
                 return (parseInt(value * 100) / 100).toFixed(2);
             case '#,#':
                 return formatThousand(Math.round(value));
@@ -305,14 +307,17 @@ export function isWaferMap(mapType) {
 }
 
 export function isDefectMap(mapType) {
+    // eslint-disable-next-line eqeqeq
     return mapType == 1;
 }
 
 export function isBinMap(mapType) {
+    // eslint-disable-next-line eqeqeq
     return mapType == 2;
 }
 
 function parseNumber(num) {
+    // eslint-disable-next-line no-restricted-globals
     if (isFinite(num)) {
         return Number(num);
     }

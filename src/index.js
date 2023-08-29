@@ -1,6 +1,6 @@
 
-import ZCheckbox from 'packages/checkbox';
-import ZMap from 'packages/map';
+import ZCheckbox from '../packages/checkbox';
+import ZMap from '../packages/map';
 
 import { version } from '../package.json';
 
