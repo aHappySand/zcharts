@@ -7,7 +7,6 @@ import store from './store';
 
 // 全局样式
 import './assets/css/main.scss';
-import 'highlight.js/styles/docco.css';
 
 Vue.config.productionTip = false;
 

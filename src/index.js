@@ -1,4 +1,5 @@
 
+import ZScatter from 'packages/chart';
 import ZCheckbox from '../packages/checkbox';
 import ZMap from '../packages/map';
 
@@ -7,6 +8,7 @@ import { version } from '../package.json';
 const components = [
   ZCheckbox,
   ZMap,
+  ZScatter,
 ];
 
 const install = (Vue) => {
@@ -25,6 +27,7 @@ if (typeof window !== 'undefined' && window.Vue) {
 export {
   ZCheckbox,
   ZMap,
+  ZScatter,
 };
 
 

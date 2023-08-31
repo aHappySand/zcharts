@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from '../../../../src/plugins/OrbitControls.js';
+import { OrbitControls } from '../../../../src/plugins/OrbitControls2.js';
 
 import { drawText, distoryObject } from './index';
 
@@ -36,6 +36,65 @@ export class PickHelper {
   }
 }
 
+
+
+const VirtualEvent = (event) => {
+  const e = {
+    preventDefault() {
+      return false;
+    },
+  };
+  for (let key in event) {
+    e[key] = event[key];
+  }
+  return e;
+};
+
+
+const VirtualDom = () => {
+  const _listeners = {};
+  let pointerId = 0;
+
+  return {
+    rect: {},
+    addEventListener(type, fn) {
+      if (!_listeners[type]) {
+        _listeners[type] = [];
+      }
+      _listeners[type].push(fn);
+    },
+    removeEventListener(type, fn) {
+      if (_listeners[type]) {
+        const index = _listeners[type].indexOf(fn);
+        _listeners[type].splice(index, 1);
+      }
+    },
+    releasePointerCapture() {
+      pointerId = null;
+    },
+    setPointerCapture(_pointerId) {
+      pointerId = _pointerId;
+    },
+    getBoundingClientRect() {
+      return this.rect;
+    },
+    cloneDom(dom) {
+      for (let key in dom) {
+        this[key] = dom[key];
+      }
+    },
+    dispatchEvent(data) {
+      const events = _listeners[data.type];
+      if (events) {
+        events.forEach(fn => {
+          fn(VirtualEvent(data.event));
+        });
+      }
+    }
+  }
+}
+
+
 export function RenderManager(canvas) {
   this.canvas = canvas;
   this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -46,6 +105,8 @@ export function RenderManager(canvas) {
   this.pickHelper = new PickHelper();
   this.scenes = [];
 }
+
+
 
 RenderManager.prototype = {
   updateSize() {
@@ -71,10 +132,10 @@ RenderManager.prototype = {
     const renderHeight = renderer.domElement.height;
 
     scenes.forEach((scene) => {
-      const rect = scene.position;
+      const rect = scene.vDom.rect;
       // set the viewport
-      const width = rect.right - rect.left;
-      const height = rect.bottom - rect.top;
+      const width = (rect.right - rect.left) ;
+      const height = (rect.bottom - rect.top);
 
       /**
        * 左下角为起点
@@ -94,86 +155,89 @@ RenderManager.prototype = {
 
 
 /**
- * @param position { left, right, bottom, top, width, height }
+ * @param dom {Element}
  * @param render { RenderManager }
  * @param option {  }
  * @param virtualDiameter {number}
  * @constructor
  */
 export function SceneManager({
- position, render, option, virtualDiameter
+ dom, render, option, virtualDiameter
 }) {
-  this.position = position;
+  this.vDom = VirtualDom();
+  this.vDom.cloneDom(dom);
+
   this.option = option;
   this.virtualDiameter = virtualDiameter;
   this.render = render;
   this.scene = new THREE.Scene();
-
   this.pointScene = new THREE.Scene();
+
+  this.maxLeftOffset = 30;
+  this.maxRightOffset = 30;
+  this.maxTopOffset = 30;
+  this.maxBottomOffset = 30;
 
   this.axisLineMaterial = new THREE.LineBasicMaterial({
     color: new THREE.Color('#3d3d3d'),
     fog: false,
   });
   this.pointMesh = Object.create(null);
-  this.addCamera(position, virtualDiameter);
+  this.addCamera();
+
+  this.currentSeries = this.option.series;
 }
 
 SceneManager.prototype = {
-  addCamera(position, virtualDiameter) {
-    this.camera = new THREE.OrthographicCamera(-position.width / 2, position.width / 2, position.height / 2, -position.height / 2, 1, virtualDiameter);
+  addCamera() {
+    const virtualDiameter = this.virtualDiameter;
+    const { rect: { width, height } } = this.vDom;
+    const halfW = width / 2;
+    const halfH = height / 2;
+
+    this.camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 1, virtualDiameter);
     // this.camera = new THREE.PerspectiveCamera( 50, 1, 1, 1000 );
     this.camera.position.z = virtualDiameter;
 
-    this.pointCamera = new THREE.OrthographicCamera(-position.width / 2, position.width / 2, position.height / 2, -position.height / 2, 1, virtualDiameter);
+    this.pointCamera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 1, virtualDiameter);
     this.pointCamera.position.z = virtualDiameter;
 
     // this.handleTransform({k: 0.36, x: 0, y: 0});
+    this.controls = new OrbitControls(this.pointCamera, this.vDom);
+    this.controls.enableRotate = false; // 禁止旋转
+    this.controls.translateType = 'xy';
+    this.controls.isRightBtnMove = false;
+    this.controls.minZoom = 1;
 
-    if (position.target) {
-      this.controls = new OrbitControls(this.pointCamera, position.target);
-      this.controls.enableRotate = false; // 禁止旋转
-      this.controls.translateType = 'xy';
-      this.controls.isRightBtnMove = false;
-      // this.controls.enablePan = false; //禁止右键拖拽
-      this.controls.minZoom = 1;
+    this.controls.addEventListener('start', (e) => {
+      this.checkOrbitControls(e.target);
+    });
+    this.controls.addEventListener('change', (e) => {
+      console.log(e.target.stopPan);
 
-      // this.controls.zoomToCursor = true;
-      const { pickHelper } = this.render;
-
-      position.target.addEventListener('mousemove', (e) => {
-        const rect = position.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        const w = rect.width;
-        const h = rect.height;
-        const mouse = {};
-        mouse.x = (x / w) * 2 - 1;
-        mouse.y = -(y / h) * 2 + 1;
-
-        pickHelper.pick(mouse, this.pointScene.children, this.pointCamera);
-        if (pickHelper.pickedObject) {
-          this.handleMousemovePoint(pickHelper.pickedObject);
-        }
+      let rk = 1 / e.target.object.zoom;
+      rk = rk < 0.2 ? 0.2 : rk;
+      this.pointGroup.children.forEach(mesh => {
+        const size = mesh.userData.size;
+        let newGeometry = new THREE.CircleGeometry( size * rk);
+        mesh.geometry.dispose();
+        mesh.geometry = newGeometry;
       });
+      this.checkOrbitControls(e.target);
+      //
+      // this.controls.target.set(0, 0, 0);
+      // this.pointCamera.position.set(0, 0, 0);
+      // this.pointCamera.zoom = 1;
 
+      this.render.render();
+    });
 
-      this.controls.addEventListener('change', (e) => {
-        this.checkOrbitControls(e.target);
-
-        this.controls.target.set(0, 0, 0);
-        this.pointCamera.position.set(0, 0, 0);
-
-        this.render.render();
-      });
-    }
+    // this.getAxisWorld();
 
     this.drawCover({});
   },
   // 处理鼠标划过
   handleMousemovePoint(pickedObject) {
-    console.log(pickedObject);
     if (pickedObject.object instanceof THREE.InstancedMesh) {
       const { type } = pickedObject.object.userData;
 
@@ -183,7 +247,8 @@ SceneManager.prototype = {
     }
   },
   updateCamera() {
-    const { width, height } = this.position;
+    const { width, height } = this.vDom.rect;
+
     const halfW = width / 2;
     const halfH = height / 2;
     this.camera.left = -halfW;
@@ -195,128 +260,170 @@ SceneManager.prototype = {
     this.camera.updateProjectionMatrix();
   },
   handleTransform(transform) {
-    const { camera, render } = this;
-    camera.zoom = transform.k;
-    camera.position.x = -transform.x / camera.zoom;
-    camera.position.y = transform.y / camera.zoom;
-    camera.updateProjectionMatrix();
-    return this;
+    const { pointCamera, camera, render, position: { width, height } } = this;
+
+    if (false) {
+      // adjust the ortho camera position based on zoom changes
+      const mouseBefore = new THREE.Vector3( transform.wx, transform.wy, 0 );
+      mouseBefore.unproject( pointCamera );
+
+      pointCamera.zoom = transform.k;
+      pointCamera.updateProjectionMatrix();
+
+      const mouseAfter = new THREE.Vector3( transform.wx, transform.wy, 0 );
+      mouseAfter.unproject( pointCamera );
+
+      pointCamera.position.sub( mouseAfter ).add( mouseBefore );
+
+    } else {
+      pointCamera.position.x = -transform.x / pointCamera.zoom;
+      pointCamera.position.y = transform.y / pointCamera.zoom;
+    }
+    let rk = 1 / transform.k;
+    rk = rk < 0.2 ? 0.2 : rk;
+    this.pointGroup.children.forEach(mesh => {
+      const size = mesh.userData.size;
+      let newGeometry = new THREE.CircleGeometry( size * rk);
+      mesh.geometry.dispose()
+      mesh.geometry = newGeometry;
+
+      var scaleVector = new THREE.Vector3();
+      var scaleFactor = 400.0;
+      var scale = scaleVector.subVectors(mesh.position, camera.position).length() / scaleFactor;
+    });
+    pointCamera.updateMatrixWorld();
+    return ;
+
+
+    //
+    // const { x, y, k: zoom } = transform;
+    // // TODO::判断是否越线
+    //
+    // const { width, height } = this.vDom.rect;
+    //
+    // const maxLeftOffset = 40;
+    // const maxRightOffset = 40;
+    // const maxTopOffset = 40;
+    // const maxBottomOffset = 30;
+    //
+    // const ratio = zoom - 1;
+    // let top = -y - ratio * maxTopOffset;
+    // let left = -x - ratio * maxLeftOffset;
+    // let right = ratio * width - left - maxRightOffset;
+    // let bottom = ratio * height - top - maxBottomOffset;
+    //
+    // this.afterOrbit = {
+    //   zoom,
+    //   left,
+    //   right,
+    //   top,
+    //   bottom,
+    // };
+    //
+    // this.drawXAxis(this.option.xAxisData, this.afterOrbit);
+    // const yData = this.filterSeriesByX(this.option);
+    // const yAxisData = [];
+    // for (let i in yData) {
+    //   yAxisData.push({
+    //     ...this.option.yAxisData[i],
+    //     ...yData[i]
+    //   });
+    // }
+    //
+    // this.drawYAxis(yAxisData,  this.afterOrbit);
+    //
+    // // 重新根据x轴 绘制
+    // this.drawPoint({
+    //   series: this.currentSeries,
+    //   yAxisData,
+    //   xAxisData: this.option.xAxisData
+    // });
+    // this.prePoint = null;
+    // this.showCurrentScatter();
+    // this.render.render();
+    // return this;
   },
 
   reRender() {
-    this.render.renderer.render(this.scene, this.camera);
+    this.render.renderer.render(this.scene, this.pointCamera);
   },
-  /**
-   * 将数据转换为坐标
-   */
   init() {
-
+    this.getAxisWorld();
   },
-  checkOrbitControls(orbit) {
-    const { zoom } = orbit.object;
-
-    const { width, height } = this.position;
+  // 获取坐标轴的世界坐标系
+  getAxisWorld() {
+    const { width, height } = this.vDom.rect;
     const halfWidth = width / 2;
     const halfHeight = height / 2;
 
-
-    const maxLeftOffset = 40;
-    const maxRightOffset = 40;
-    const maxTopOffset = 40;
-    const maxBottomOffset = 30;
-
-    const maxZLeftOffset = maxLeftOffset * zoom;
-    const maxZRightOffset = maxRightOffset * zoom;
-    const maxZTopOffset = maxTopOffset * zoom;
-    const maxZBottomOffset = maxBottomOffset * zoom;
+    const {maxLeftOffset, maxRightOffset, maxTopOffset, maxBottomOffset } = this;
 
 
-    let worldPosition = new THREE.Vector3();
-    let b = worldPosition.project(this.pointCamera);
+    const leftV = new THREE.Vector3(maxLeftOffset / halfWidth - 1, 0, 0);
+    this.axisWorldLeft = leftV.unproject(this.camera);
 
-    const xn = b.x * width / 2;
-    const yn = b.y * height / 2;
+    const rightV = new THREE.Vector3((width - maxRightOffset) / halfWidth - 1, 0, 0);
+    this.axisWorldRight = rightV.unproject(this.camera);
 
-    const lHalfWidth = zoom * halfWidth;
-    const lHalfHeight = zoom * halfHeight;
+    const topV = new THREE.Vector3(0, -maxTopOffset / halfHeight + 1, 0);
+    this.axisWorldTop = topV.unproject(this.camera);
 
-
-    // (zoom - 1) * height / 2 + yn
-    let top = (zoom - 1 + b.y) * halfHeight;
-    // (zoom - 1) * width / 2 - xn
-    let left = (zoom - 1 - b.x) * halfWidth;
+    const bottomV = new THREE.Vector3(0, -(height - maxBottomOffset) / halfHeight + 1, 0);
+    this.axisWorldBottom = bottomV.unproject(this.camera);
 
 
-    const orbitRight = xn + lHalfWidth;
-    const orbitLeft = xn - lHalfWidth;
-    const orbitTop = yn + lHalfHeight;
-    const orbitBottom = yn - lHalfHeight;
+  },
+  parseXPosition(x) {
+    const { width } = this.vDom.rect;
+    const halfWidth = width / 2;
+    const leftV = new THREE.Vector3(x / halfWidth - 1, 0, 0);
+    const nLeftV = leftV.unproject(this.camera).project(this.pointCamera);
+    return (nLeftV.x + 1) * halfWidth;
+  },
+  checkOrbitControls(orbit) {
+    const { zoom } = orbit.object;
+    const { width, height } = this.vDom.rect;
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
 
+    const {maxLeftOffset, maxRightOffset, maxTopOffset, maxBottomOffset } = this;
 
-    // 是否需要重新更改orbit controls
-    let right = 0;
-    // 最右边
-    if (orbitRight - maxZRightOffset < halfWidth - maxRightOffset) {
-      const more = halfWidth - orbitRight + maxZRightOffset - maxRightOffset;
-      left -= more;
-      this.controls.target.x -= more;
-      this.pointCamera.position.x -= more;
-    } else {
-      right = orbitRight - width / 2;
-      // 最左边
-      if (orbitLeft + maxZLeftOffset > -halfWidth + maxLeftOffset) {
-        const more = orbitLeft + halfWidth + maxZLeftOffset - maxLeftOffset;
-        left = 0;
-        right -= more;
-        this.controls.target.x += more;
-        this.pointCamera.position.x += more;
-      }
-    }
+    this.getAxisWorld();
 
-    let bottom = 0;
-    // 最下边
-    if (orbitBottom + maxZBottomOffset > -halfHeight + maxBottomOffset) {
-      const more = orbitBottom + halfHeight + maxZBottomOffset - maxBottomOffset;
-      top += more;
-      this.controls.target.y += more;
-      this.pointCamera.position.y += more;
-    } else {
-      bottom = -orbitBottom - halfHeight;
-      // 最上边
-      if (orbitTop - maxZTopOffset < halfHeight - maxTopOffset) {
-        const more = halfHeight - orbitTop + maxZTopOffset - maxTopOffset;
-        top = 0;
-        bottom -= more;
-        this.controls.target.y -= more;
-        this.pointCamera.position.y -= more;
-      }
-    }
+    orbit.stopPan = false;
 
-    // 缩放
-    if (!this.afterOrbit || this.afterOrbit.zoom !== zoom) {
+    const nLeftV = this.axisWorldLeft.project(this.pointCamera);
+    const xLeft = (nLeftV.x + 1) * halfWidth;
+    console.log(xLeft);
+    // if (xLeft > maxLeftOffset && orbit.xDirection >= 0) {
+    //   orbit.stopPan = true;
+    //   return;
+    // }
 
-      // 移动x轴
-    } else if (this.afterOrbit.left !== left && this.afterOrbit.top === top) {
+    const nRightV = this.axisWorldRight.project(this.pointCamera);
+    const xRight = (nRightV.x + 1) * halfWidth;
+    // if (xRight < width - maxRightOffset && orbit.xDirection <= 0) {
+    //   orbit.stopPan = true;
+    //   return;
+    // }
 
-    }
+    const nTopV = this.axisWorldTop.project(this.pointCamera);
+    const yTop = (1 - nTopV.y) * halfHeight;
 
-    this.afterOrbit = {
-      zoom,
-      left,
-      right,
-      top,
-      bottom,
-    };
+    const nBottomV = this.axisWorldBottom.project(this.pointCamera);
+    const yBottom = (1 - nBottomV.y) * halfHeight;
 
-    this.drawXAxis(this.option.xAxisData, this.afterOrbit);
+    const xWidth = xRight - xLeft;
+    const xStartScale = (maxLeftOffset - xLeft) / xWidth;
+    const xEndScale = xStartScale + (width - maxLeftOffset - maxRightOffset) / xWidth;
 
+    const yHeight = yBottom - yTop;
+    const yStartScale = (yBottom - height + maxBottomOffset) / yHeight;
+    const yEndScale = yStartScale + (height - maxBottomOffset - maxTopOffset) / yHeight;
 
-    worldPosition = null;
-    b = null;
-    // const  g = this.pointGroup.children[0].geometry;
-    // const radius = g.parameters.radius
-    // g.parameters.radius = radius / zoom;
-    // g.needsUpdate = true;
+    console.log(xLeft, xRight, yTop, yBottom);
+
+    const axisScale = { xStartScale, xEndScale, yStartScale, yEndScale };
   },
   // x轴主线
   drawXAxisMain() {
@@ -326,10 +433,8 @@ SceneManager.prototype = {
    * @param axisData {Array}
    * @param limit
    */
-  drawXAxis(axisData, limit = {
- left: 0, right: 0, top: 0, bottom: 0, zoom: 1
-}) {
-    const { width, height } = this.position;
+  drawXAxis(axisData, limit = { xStartScale: 0, xEndScale: 1 }) {
+    const { width, height } = this.vDom.rect;
     const halfW = width / 2;
     const halfH = height / 2;
 
@@ -340,24 +445,16 @@ SceneManager.prototype = {
     group.userData.type = 'xaxis';
     group.position.z = 12;
 
-    let {
- left: limitLeft, right: limitRight, top: limitTop, bottom: limitBottom, zoom
-} = limit;
-    limitLeft = Math.floor(limitLeft);
-    limitRight = Math.floor(limitRight);
-    limitTop = Math.floor(limitTop);
-    limitBottom = Math.floor(limitBottom);
+    const { xStartScale, xEndScale } = limit;
 
     axisData.forEach((axis) => {
-      const {
- data, position = 'bottom', offset = 30, left = 40, right = 40, type = 'category'
-} = axis;
-
+      const { data, position = 'bottom', offset = 30, left = 40, right = 40, type = 'category' } = axis;
+      const hasStartX = axis.hasOwnProperty('startX');
       const bottom = Math.floor(-halfH + offset) + 0.5;
       // 主线
       const points = [
-        new THREE.Vector3(-halfW + left - 5, bottom, 0),
-        new THREE.Vector3(halfW - right + 5, bottom, 0),
+        new THREE.Vector3(-halfW + left - 15, bottom, 0),
+        new THREE.Vector3(halfW - right + 10, bottom, 0),
       ];
       const geometry = new THREE.BufferGeometry().setFromPoints(points);
       const line = new THREE.Line(geometry, this.axisLineMaterial);
@@ -368,13 +465,15 @@ SceneManager.prototype = {
 
       let startIndex = 0;
         let endIndex = len - 1;
-if (type === 'category') {
-        if (limitLeft > 0) {
-          const rWidth = (width - left - right) * zoom;
-          startIndex = Math.floor((limitLeft - left) / rWidth * len);
-          if (startIndex < 0) startIndex = 0;
-          endIndex = len - Math.ceil((limitRight - right) / rWidth * len) - 1;
+      if (type === 'category') {
+        if (hasStartX) {
+          startIndex = Math.floor(xStartScale * len);
+          endIndex = Math.floor(xEndScale * len);
+          if (endIndex >= len) {
+            endIndex = len - 1;
+          }
         }
+
         // 数值类型
       } else {
 
@@ -382,21 +481,32 @@ if (type === 'category') {
       const leftCount = endIndex - startIndex + 1;
 
       const splitNumber = leftCount >= 10 ? 10 : leftCount;
-      console.log(splitNumber, 'splitNumber', endIndex, startIndex);
-      const xLen = width - left - right;
-      const step = Math.floor(len / splitNumber);
+      const xLen = width - left - right - 20;
+      const step = Math.round(leftCount / splitNumber);
 
       // x轴对应的坐标点
-      const ratio = Math.ceil(xLen / len);
+      const ratio = Math.ceil(xLen / leftCount) * (leftCount < 2 ? 0.5 : 1);
 
       const tickGeometry = new THREE.BufferGeometry();
       const positions = [];
-      for (let i = 0, start = Math.floor(-halfW + left + ratio) + 0.5; i < len; i++) {
+      let start;
+      if (hasStartX) {
+        const nStart = this.parseXPosition(axis.startX);
+        if (type === 'category') {
+
+        }
+      } else {
+        start = Math.floor(-halfW + left + ratio / 2) + 0.5;
+        axis.startX = start;
+      }
+
+
+      for (let i = 0; i < len; i++) {
         data[i].x = undefined;
 
         if (i >= startIndex && i <= endIndex) {
           data[i].x = start;
-          if (i % step === 0) {
+          if ((i - startIndex) % step === 0) {
             // start = Math.floor(start) + 0.5;
             positions.push(start, bottom, 0);
             positions.push(start, bottom - 10, 0);
@@ -415,10 +525,10 @@ if (type === 'category') {
     this.scene.add(group);
   },
   // 创建遮盖层，放大超过范围的不显示
-  drawCover({
- left = 40, right = 40, top = 30, bottom = 30
-}) {
-    const { width, height } = this.position;
+  drawCover({ left = 40, right = 40, top = 30, bottom = 30 }) {
+
+
+    const { width, height } = this.vDom.rect;
 
     const group = new THREE.Group();
     this.scene.add(group);
@@ -477,32 +587,48 @@ if (type === 'category') {
   createPointMesh({ code, count, size = 10 }) {
     const material = new THREE.MeshBasicMaterial({
       color: 0xffffff,
-      opacity: 0.5,
+      opacity: 0.7,
       transparent: true,
     });
     const geometry = new THREE.CircleGeometry(size);
     const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.userData.size = size;
     this.pointMesh[code] = mesh;
     if (!this.pointGroup) {
       this.pointGroup = new THREE.Group();
+      this.pointGroup.position.z = 13;
       this.pointGroup.userData.type = 'content';
     }
     this.pointGroup.add(mesh);
     this.pointScene.add(this.pointGroup);
     return mesh;
   },
-  drawYAxis(axisData) {
-    const { width, height } = this.position;
+  drawYAxis(axisData, limit = { left: 0, right: 0, top: 0, bottom: 0, zoom: 1 }) {
+    const { width, height } = this.vDom.rect;
+
     const halfW = width / 2;
     const halfH = height / 2;
+
+    if (this.yAxisGroup) {
+      distoryObject(this.yAxisGroup, this.scene);
+    }
     const group = new THREE.Group();
     group.userData.type = 'yaxis';
-    group.position.z = 2;
+    group.position.z = 12;
+
+    let {
+      left: limitLeft, right: limitRight, top: limitTop, bottom: limitBottom, zoom
+    } = limit;
+    limitLeft = Math.floor(limitLeft);
+    limitRight = Math.floor(limitRight);
+    limitTop = Math.floor(limitTop);
+    limitBottom = Math.floor(limitBottom);
 
     axisData.forEach((axis) => {
       const {
- data, position = 'left', offset = 40, top = 40, bottom = 30, splitNumber = 5
-} = axis;
+        data, position = 'left', offset = 30, top = 40, bottom = 30, type = 'value',
+        minValue, maxValue
+      } = axis;
       const left = Math.floor(-halfW + offset) + 0.5;
       const rBottom = -halfH + bottom;
       axis.startPos = rBottom;
@@ -511,26 +637,40 @@ if (type === 'category') {
       // 主线
       const points = [
         new THREE.Vector3(left, halfH - top, 0),
-        new THREE.Vector3(left, rBottom - 5, 0),
+        new THREE.Vector3(left, rBottom - 15, 0),
       ];
       const geometry = new THREE.BufferGeometry().setFromPoints(points);
       const line = new THREE.Line(geometry, this.axisLineMaterial);
+      line.name = 'yaxis-line';
       group.add(line);
 
-      // 刻度
-      const step = (height - top - bottom) / (splitNumber - 1);
+      const leftCount = 10;
+      let splitNumber = leftCount >= 10 ? 10 : leftCount;
+
+      const stepValue = (maxValue - minValue) / splitNumber;
+
+      const xLen = height - top - bottom - 20;
+      const step = Math.round(leftCount / splitNumber);
+
+      // y轴对应的坐标点
+      const ratio = Math.ceil(xLen / leftCount) * (leftCount < 2 ? 0.5 : 1);
 
       const tickGeometry = new THREE.BufferGeometry();
-
       const positions = [];
-      for (let i = 1, start = rBottom + step; i < splitNumber; i++, start += step) {
-        positions.push(left, start, 0);
-        positions.push(left - 10, start, 0);
+      for (let i = 0, v = minValue, start = minValue === 0 ? rBottom : rBottom + ratio / 2; i < splitNumber; i++, start += ratio, v += stepValue) {
+        if (v !== 0) {
+          positions.push(left, start, 0);
+          positions.push(left - 10, start, 0);
+        }
+        const txtMesh = drawText({ txt: v, x: left - 20, y: start });
+        group.add(txtMesh);
       }
+
       tickGeometry.attributes.position = new THREE.Float32BufferAttribute(positions, 3);
       const lineSegments = new THREE.LineSegments(tickGeometry, this.axisLineMaterial);
       group.add(lineSegments);
     });
+    this.yAxisGroup = group;
     this.scene.add(group);
   },
 
@@ -538,50 +678,232 @@ if (type === 'category') {
 
   },
 
-  drawPoint({ series, yAxisData, xAxisData }) {
-    const { width, height } = this.position;
+  filterSeriesByX({ series, xAxisData }) {
 
-    series.forEach((serie, index) => {
+    const currentSeries = [];
+    const yAxisData = {};
+    series.forEach((serie, sIndex) => {
       const {
- data, xAxisIndex = 0, yAxisIndex = 0, id
-} = serie;
+        data, xAxisIndex = 0, yAxisIndex = 0, id
+      } = serie;
 
-      const { startPos, endPos } = yAxisData[xAxisIndex];
       const { data: xData } = xAxisData[xAxisIndex];
       const xPos = Object.create(null);
       xData.forEach(({ name, x }) => {
         xPos[name] = x;
       });
+      const currData = [];
+      let dIndex = 0;
+      let minValue = Number.MAX_SAFE_INTEGER,
+        maxValue = Number.MIN_SAFE_INTEGER;
 
-      // 获取y轴中的最大值，最小值
-      data.sort((a, b) => a[1] - b[1]);
-      const minData = data[0];
-      const maxData = data[data.length - 1];
-      // 最大，最小的差，根据比例计算y轴的坐标点
-      const dataGap = maxData[1] - minData[1];
-      const posGap = endPos - startPos;
-      const posC = posGap / 2;
-      const ratio = dataGap === 0 ? posGap : posGap / dataGap;
-
-      const yPos = (v) => (dataGap === 0 ? posC : v * ratio) + startPos;
-
-      const matrix = new THREE.Matrix4();
-      const mesh = this.createPointMesh({ code: id || index, count: data.length, size: 4 });
-      mesh.userData.type = 'series';
-      mesh.userData.chartType = serie.type;
-      mesh.userData.seriesIndex = index;
-
-      mesh.name = serie.name || id;
-
-      const color = new THREE.Color('#81ffae');
+      const yData = [];
 
       data.forEach((d, i) => {
         if (d[1] !== '' && d[1] !== undefined) {
-          matrix.setPosition(xPos[d[0]], yPos(d[1]), 0);
-          mesh.setMatrixAt(i, matrix);
-          mesh.setColorAt(i, color);
+          // 有效数据
+          if (xPos[d[0]] !== undefined) {
+            currData[dIndex] = d;
+            dIndex++;
+
+            if (minValue > d[1]) {
+              minValue = d[1];
+            }
+
+            if (maxValue < d[1]) {
+              maxValue = d[1];
+            }
+          }
         }
       });
+
+      if (currData.length) {
+        yAxisData[yAxisIndex] = { minValue, maxValue, data: yData };
+        currentSeries.push({ ...serie, data: currData, minValue, maxValue });
+      }
     });
+
+    this.currentSeries = currentSeries;
+    return yAxisData;
+  },
+
+  drawPoint({ series, startSeriesIndex = 0, yAxisData, startSeriesDataIndex = 0, xAxisData, xPoses = null }) {
+    if (series.length) {
+      if (this.pointGroup) {
+        this.pointGroup.visible = true;
+      }
+
+      for (let index = startSeriesIndex, len = series.length; index < len; index++) {
+        startSeriesIndex = index + 1;
+        const serie = series[index];
+        const { data, xAxisIndex = 0, yAxisIndex = 0, id } = serie;
+
+        const { startPos, endPos } = yAxisData[xAxisIndex];
+
+        if (!xPoses || !xPoses.hasOwnProperty(xAxisIndex)) {
+          const { data: xData } = xAxisData[xAxisIndex];
+          if (!xPoses) {
+            xPoses = {};
+          }
+          xPoses[xAxisIndex] = {};
+
+          xData.forEach(({ name, x }) => {
+            xPoses[xAxisIndex][name] = x;
+          });
+        }
+        const xPos = xPoses[xAxisIndex];
+
+        if (!series.hasOwnProperty('minValue')) {
+          // 获取y轴中的最大值，最小值
+          data.sort((a, b) => a[1] - b[1]);
+          serie.minValue = data[0][1];
+          serie.maxValue = data[data.length - 1][1];
+        }
+        // 最大，最小的差，根据比例计算y轴的坐标点
+        const dataGap = serie.maxValue - serie.minValue;
+        const posGap = endPos - startPos;
+        const posC = posGap / 2;
+        const ratio = dataGap === 0 ? posGap : posGap / dataGap;
+
+        const yPos = (v) => (dataGap === 0 ? posC : v * ratio) + startPos;
+
+        const matrix = new THREE.Matrix4();
+        const code = id || index;
+        if (this.pointMesh[code]) {
+          distoryObject(this.pointMesh[code], this.pointGroup);
+        }
+        const mesh = this.createPointMesh({ code, count: data.length, size: 4 });
+        mesh.userData.type = 'series';
+        mesh.userData.chartType = serie.type;
+        mesh.userData.seriesIndex = index;
+
+        mesh.name = serie.name || id;
+
+        const color = new THREE.Color('#81ffae');
+        const black = new THREE.Color('#ffffff');
+        data.forEach((d, i) => {
+          if (d[1] !== '' && d[1] !== undefined) {
+            if (xPos[d[0]] !== undefined) {
+              matrix.setPosition(xPos[d[0]], yPos(d[1]), 0);
+              mesh.setMatrixAt(i, matrix);
+              mesh.setColorAt(i, color);
+            } else {
+              mesh.setColorAt(i, black);
+            }
+          }
+        });
+
+        serie.itemStyle = {
+          color: '#81ffae',
+        };
+
+        if (startSeriesIndex < len) {
+          requestAnimationFrame(() => {
+            this.render.render();
+            this.drawPoint({series, startSeriesIndex, yAxisData, xAxisData, xPoses})
+          });
+        }
+      }
+    } else {
+      if (this.pointGroup) {
+        this.pointGroup.visible = false;
+      }
+    }
+  },
+
+
+
+  showCurrentScatter () {
+    if (!this.currentScatterMesh) {
+      this.currentScatterMesh = null;
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        opacity: 0.7,
+        transparent: true,
+      });
+      const geometry = new THREE.CircleGeometry(4);
+      this.currentScatterMesh = new THREE.InstancedMesh(geometry, material, 1);
+      this.currentScatterMesh.userData.size = 4;
+      this.currentScatterMesh.matrix4 = new THREE.Matrix4();
+      this.currentScatterMesh.position.z = 100;
+      this.pointScene.add(this.currentScatterMesh);
+    }
+
+    if (this.prePoint) {
+      const { object, instanceId, color } = this.prePoint;
+      const size = object.userData.size;
+      if (this.currentScatterMesh.userData.size !== size) {
+        this.currentScatterMesh.userData.size = size;
+        const geometry = new THREE.CircleGeometry(size);
+        this.currentScatterMesh.geometry.dispose();
+        this.currentScatterMesh.geometry = geometry;
+      }
+      object.getMatrixAt(instanceId, this.currentScatterMesh.matrix4);
+
+      this.currentScatterMesh.setColorAt(0, color);
+      this.currentScatterMesh.setMatrixAt(0, this.currentScatterMesh.matrix4);
+      this.currentScatterMesh.visible = true;
+      this.currentScatterMesh.instanceColor.needsUpdate = true;
+      this.currentScatterMesh.instanceMatrix.needsUpdate = true;
+
+      return true;
+    } else {
+      this.currentScatterMesh.visible = false;
+      return false;
+    }
+  },
+  showInfo(mouse) {
+    console.time('pick');
+    const { pickHelper } = this.render;
+    if (mouse) {
+      pickHelper.pick(mouse, this.pointScene.children, this.pointCamera);
+    }
+    console.timeEnd('pick');
+
+    if (mouse && pickHelper.pickedObject) {
+      console.time('pick2');
+
+      const object = pickHelper.pickedObject.object;
+      const seriesIndex = object.userData.seriesIndex;
+      const { instanceId } = pickHelper.pickedObject;
+
+      const series = this.currentSeries[seriesIndex];
+      if (!series) {
+        //return this.showInfo();
+        return ;
+      }
+      const color = new THREE.Color();
+      object.getColorAt(instanceId, color);
+      color.addScalar(-0.4);
+      this.prePoint = {
+        object,
+        color: color,
+        instanceId
+      };
+      this.showCurrentScatter();
+      this.render.render();
+      console.timeEnd('pick2');
+
+
+      const data = series.data[instanceId];
+
+      return [
+        {
+          seriesIndex,
+          dataIndex: [ instanceId ],
+          type: series.type,
+          name: series.name,
+          symbol: series.symbol || 'circle',
+          color: series.itemStyle.color,
+          item: data
+        }
+      ]
+    } else if (this.prePoint) {
+      this.prePoint.color = null;
+      this.prePoint = null;
+      this.showCurrentScatter();
+
+      this.render.render();
+    }
   }
 };

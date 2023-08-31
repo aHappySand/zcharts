@@ -30,6 +30,22 @@ export function drawText({
   return plane;
 }
 
+
+export function getTextLength({ txt, fontSize = 14 }) {
+  const scale = 2;
+  let offscreen = new OffscreenCanvas(200, fontSize * scale);
+  const ctx = offscreen.getContext('2d');
+  ctx.font = `${fontSize * scale}px FangSong,"宋体",sans-serif`;
+  const textRect = ctx.measureText(txt);
+  const width = textRect.width;
+
+  offscreen.height = 1;
+  offscreen.height = 1;
+  offscreen = null;
+
+  return width;
+}
+
 export function drawText2({
  txt, x = 0, y = 0, color = '#8b8b8b'
 }) {

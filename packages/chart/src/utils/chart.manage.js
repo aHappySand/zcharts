@@ -3,6 +3,8 @@ import {
   SceneManager,
 } from './chart.draw.js';
 
+const postMsg = self.postMessage;
+
 const VIRTUAL_DIAMETER = 1000;
 
 
@@ -86,9 +88,9 @@ Container.prototype = {
   },
   directDraw({ items }) {
     const scenes = [];
-    items.forEach(({ position, index }) => {
+    items.forEach(({ dom, index }) => {
       const grid = this.grid[index];
-      grid.createScene(position);
+      grid.createScene(dom);
       grid.directDraw();
       scenes.push(grid.scene);
     });
@@ -139,18 +141,18 @@ function GridManager(options) {
 }
 
 GridManager.prototype = {
-  createScene(position) {
+  createScene(dom) {
     if (!this.scene) {
       const { render } = this.container;
 
       this.scene = new SceneManager({
-        position,
+        dom,
         option: this.chartOption,
         render,
         virtualDiameter: VIRTUAL_DIAMETER,
       });
     } else {
-      this.scene.position = position;
+      this.scene.dom = dom;
       this.scene.updateCamera();
     }
     return this;
@@ -160,28 +162,47 @@ GridManager.prototype = {
       return Math.floor(Math.random() * len);
     }
     const sourceData = [];
-    const xAxis = (new Array(21)).fill('').map((v, i) => `中文x${i}`);
+    const xAxis = (new Array(100)).fill('').map((v, i) => `中文x${i}`);
     const xLen = xAxis.length - 1;
     const yAxis = [];
+    let maxValue = Number.MIN_SAFE_INTEGER,
+      minValue = Number.MAX_SAFE_INTEGER;
+
     // for (let i = 0; i <= xLen; i++) {
     //   const yv = i * 10;
     //   yAxis[i] = yv;
     //   sourceData[i] = [xAxis[i], yv];
     // }
-    console.log(sourceData);
-    for (let i = 0; i < 1000; i++) {
+    // maxValue = xLen * 10;
+    // minValue = 0;
+
+
+    for (let i = 0; i < 1000000; i++) {
       const yv = Math.random() * 1000;
       yAxis[i] = yv;
+      if (minValue > yv) {
+        minValue = yv;
+      }
+      if (maxValue < yv) {
+        maxValue = yv;
+      }
       sourceData[i] = [xAxis[random(xLen)], yv];
     }
 
 
     const xAxisData = [{ data: xAxis.map(v => ({ name: v })) }];
-    const yAxisData = [[{ data: yAxis }]];
+    const yAxisData = [{ data: yAxis, minValue, maxValue }];
     this.chartOption = {
       series: [{
+        symbol: 'circle',
+        name: 'test测试',
         data: sourceData,
-      }],
+      },
+        {
+          symbol: 'circle',
+          name: 'test测试2',
+          data: sourceData,
+        }],
       yAxisData,
       xAxisData
     };
@@ -212,6 +233,20 @@ GridManager.prototype = {
       data,
     };
   },
+
+  handleShowInfo(event) {
+    const data = this.scene.showInfo(event);
+    if (data) {
+      this.hasShowInfo = true;
+      postMsg({ type: this.type, data, index: this.index });
+    } else if (this.hasShowInfo) {
+      this.hasShowInfo = false;
+      postMsg({ type: this.type, index: this.index });
+    }
+  },
+  handleOrbitControls(data) {
+    this.scene.vDom.dispatchEvent(data);
+  }
 };
 
 
@@ -222,18 +257,42 @@ export default function () {
      */
     container: null,
     init(e) {
-      const { data, props } = e.data;
-      this.container = new Container({ gridData: data, props });
-      // postMsg({ type: 'init', data: this.container.toJson() });
+      const { options, props } = e.data;
+      this.container = new Container({ gridData: options, props });
+      postMsg({ type: 'init', data: this.container.toJson() });
       return this;
     },
-
+    getGrid(e) {
+      const { index, type } = e.data;
+      const grid = this.container.getGridByIndex(index);
+      grid.type = type;
+      return grid;
+    },
     draw(e) {
       this.container.directDraw(e.data);
+    },
+
+    transform(e) {
+      const { transform } = e.data;
+      const grid = this.getGrid(e);
+      grid.scene.handleTransform(transform);
+      grid.container.directDrawCurrent();
     },
 
     getList() {
       return { type: 'init', data: this.container.toJson() };
     },
+
+    mousemoveInfo(e) {
+      const { event } = e.data;
+      const grid = this.getGrid(e);
+      grid.handleShowInfo(event);
+    },
+
+    orbitControls(e) {
+      const { data } = e.data;
+      const grid = this.getGrid(e);
+      grid.handleOrbitControls(data);
+    }
   };
 }

@@ -10,7 +10,11 @@
           :style="gridStyle"
           ref="splits"
         >
-          <Container ref="chart"></Container>
+          <Container ref="chart"
+             @onTransform="(t) => handleTransform(split, t)"
+             @onMousemoveInfo="(mouse, e) => handleMousemoveInfo(split, mouse, e)"
+             @onOrbitControls="(e) => handleOrbitControls(split, e)"
+          ></Container>
         </div>
       </div>
     </div>
@@ -22,7 +26,12 @@
 
 <script>
   import Container from './container.vue';
-  import ChartManage from './utils/chart.manage.js';
+  import { createWorkerTask } from '../../../src/utils/createWorker';
+  import ChartWorker from './utils/chart.worker.js';
+  import Vue from 'vue';
+
+  import ChartTip from './ChartTip.js';
+  Vue.use(ChartTip);
 
   export default {
     name: 'ZScatter',
@@ -39,6 +48,8 @@
       this.id = 'map';
       this.splitList = [];
 
+      this.options = [{}];
+
       return {
         isLoading: false,
         gridKey: Math.random(),
@@ -53,7 +64,7 @@
     },
 
     created() {
-      this.manage = ChartManage();
+
     },
 
     computed: {
@@ -72,10 +83,17 @@
     },
     methods: {
       init() {
-        const map = this.$refs.mapc;
-        const { width, height } = map.getBoundingClientRect();
-        map.width = width;
-        map.height = height;
+        const canvas = this.$refs.mapc;
+        const { width, height } = canvas.getBoundingClientRect();
+        canvas.width = width;
+        canvas.height = height;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        const offscreenCanvas = canvas.transferControlToOffscreen();
+
+        this.worker = null;
+
+        this.size = this.row * this.col;
 
         this.handler = {
           init: (event) => {
@@ -83,61 +101,147 @@
             const { split } = event.data.data;
             this.splitList = split;
             this.total = this.splitList.length;
-
             this.$nextTick(() => {
               this.postDrawCommand();
             });
           },
+
+          draw: (event) => {
+            const { index, property } = event.data;
+            const currIndex = this.getCurrentIndex(index);
+
+            let t = 1;
+            const drawCanvas = () => {
+              const map = this.$refs.map[currIndex];
+              if (map) {
+                map.changeCanvas(canvas, property);
+              } else {
+                requestAnimationFrame(drawCanvas);
+              }
+            }
+            requestAnimationFrame(drawCanvas);
+          },
+
+          mousemoveInfo: (event) => {
+            const { index, data } = event.data;
+            const currIndex = this.getCurrentIndex(index);
+            const map = this.$refs.chart[currIndex];
+            if (map) {
+              this.mousemoveInfo(data);
+            }
+          },
           drawed: () => {
             this.isLoading = false;
+          },
+
+          text: () => {
+
           }
         };
 
-        this.manage.init({
- data: {
-          type: 'init',
-          data: [{
-            option: {}
-          },
-            {
-              option: {}
+        const opt = this.getResetOption();
+        opt.props.canvas = offscreenCanvas;
+
+        createWorkerTask(ChartWorker, ({event, wt}) => {
+            if(!this.worker) {
+              this.workTask = wt;
+              this.worker = wt.worker;
             }
-          ],
+            const handle = this.handler[event.data.type];
+            if (handle) {
+              handle.call(this, event);
+            }
+          },
+          {
+            type: 'init',
+            ...opt,
+          }, [offscreenCanvas]);
+      },
+      getResetOption() {
+        const { width, height } = this.$el.getBoundingClientRect();
+        return {
+          options: this.options,
           props: {
-            canvas: map
+            row: this.row,
+            col: this.col,
+            width,
+            height,
+            gapW: 0,
+            gapH: 60,
           }
         }
-});
-
-        this.handler.init({
-          data: this.manage.getList()
-        });
       },
-
       postDrawCommand() {
-        const charts = this.$refs.chart;
+        if (!this.worker) return;
+        const maps = this.$refs.chart;
         const items = [];
         const preSize = this.prePageSize;
-        charts.forEach((map, index) => {
+        maps.forEach((map, index) => {
           items.push({
             index: preSize + index,
-            position: map.getContainerPosition(),
+            dom: map.cloneDom(),
           });
         });
-        this.manage.draw({
- data: {
-          items
-        }
-});
 
-        this.handler.drawed();
+        this.worker.postMessage({
+          type: 'draw',
+          items,
+        });
       },
       getCurrentIndex(index) {
         return index - (this.page - 1) * this.size;
       },
+      handleTransform(split, transform) {
+        if (this.worker) {
+          this.worker.postMessage({
+            type: 'transform',
+            transform,
+            index: split.index,
+          });
+        }
+      },
       handleChangePage() {
 
-      }
+      },
+      handleMousemoveInfo(split, event, e) {
+        this.mouseEvent = e;
+        if (this.worker) {
+          this.worker.postMessage({
+            type: 'mousemoveInfo',
+            index: split.index,
+            event,
+          });
+        }
+      },
+      hideDieInfo() {
+        this.$chartTip.close();
+      },
+      mousemoveInfo(info) {
+        console.log(info, '---------------------');
+        if (info && this.mouseEvent) {
+          this.showDieInfo({ data: info, e: this.mouseEvent });
+        } else {
+          this.hideDieInfo();
+        }
+      },
+      showDieInfo({ data, e }) {
+        this.$chartTip({
+          tips: data,
+          position: {
+            left: e.pageX,
+            top: e.pageY,
+          }
+        });
+      },
+      handleOrbitControls(split, data) {
+        if (this.worker) {
+          this.worker.postMessage({
+            type: 'orbitControls',
+            index: split.index,
+            data,
+          });
+        }
+      },
     },
 
     beforeDestroy() {

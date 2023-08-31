@@ -1,9 +1,10 @@
 import handler from './chart.manage.js';
 
+const manager = handler();
 self.addEventListener('message', async (e) => {
   const { type } = e.data;
-  const handle = handler[type];
+  const handle = manager[type];
   if (handle) {
-    handle.call(handler, e);
+    handle.call(manager, e);
   }
 });
